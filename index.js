@@ -3,17 +3,26 @@ const express = require("express");
 const app = express();
 const mongoose = require("mongoose");
 const cors = require("cors");
- 
+const fetch = require("node-fetch");
+require("dotenv").config();
+
 app.use(express.json());
- 
+
 app.use(cors()); // Allow all origins to prevent connection issues
- 
+
 // Db connection
-mongoose
-  .connect("mongodb://localhost:27017/DevVesre")
-  .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.log(err));
- 
+console.log("ENV CHECK:", process.env.MONGO_URI);
+const MONGO_URI = process.env.MONGO_URI;
+
+if (!MONGO_URI) {
+  console.log("❌ MONGO_URI not found");
+} else {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log("MongoDB Connected ✅"))
+    .catch(err => console.log(err));
+}
+
+
 const userSchema = new mongoose.Schema({
   name: { type: String },
   email: { type: String, required: true },
@@ -32,8 +41,8 @@ const Otp = mongoose.model("Otp", optSchema);
 const nodemailer = require("nodemailer");
 const createTransporter = () => {
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      console.warn("Nodemailer missing EMAIL_USER or EMAIL_PASS in .env. OTP Emails will fail.");
-      return null;
+    console.warn("Nodemailer missing EMAIL_USER or EMAIL_PASS in .env. OTP Emails will fail.");
+    return null;
   }
   return nodemailer.createTransport({
     service: 'gmail',
@@ -44,17 +53,17 @@ const createTransporter = () => {
   });
 };
 const transporter = createTransporter();
- 
+
 app.get("/", (req, res) => {
   res.send("this is server side");
 });
- 
+
 // ==========================================
 // PRE-REGISTRATION OTP API (Step 1 of Signup)
 // ==========================================
 app.post("/send-signup-otp", async (req, res) => {
   const { name, email, password } = req.body;
-  
+
   try {
     let user = await User.findOne({ email });
     if (user) {
@@ -62,7 +71,7 @@ app.post("/send-signup-otp", async (req, res) => {
     }
 
     if (!transporter) {
-       return res.status(500).json({ error: "Backend missing EMAIL_USER or EMAIL_PASS in .env to send verification OTP." });
+      return res.status(500).json({ error: "Backend missing EMAIL_USER or EMAIL_PASS in .env to send verification OTP." });
     }
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -72,10 +81,10 @@ app.post("/send-signup-otp", async (req, res) => {
     await Otp.create({ email, otp: otpCode });
 
     const mailOptions = {
-        from: `"DevVerse Verification" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Verify Your DevVerse Account",
-        html: `
+      from: `"DevVerse Verification" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Verify Your DevVerse Account",
+      html: `
             <div style="font-family: sans-serif; text-align: center; color: #1e293b; padding: 20px;">
                 <h1 style="color: #6366f1;">Welcome to DevVerse 🚀</h1>
                 <p>Hello ${name},</p>
@@ -90,7 +99,7 @@ app.post("/send-signup-otp", async (req, res) => {
 
     await transporter.sendMail(mailOptions);
     return res.json({ message: "OTP_SENT" });
-    
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error sending verification email." });
@@ -101,29 +110,29 @@ app.post("/send-signup-otp", async (req, res) => {
 // VERIFY SIGNUP API (Step 2 of Signup)
 // ==========================================
 app.post("/verify-signup", async (req, res) => {
-    const { name, email, password, otp } = req.body;
-    try {
-        const record = await Otp.findOne({ email });
-        
-        if (!record) {
-             return res.status(400).json({ error: "Verification code expired. Please request a new one." });
-        }
-        
-        if (record.otp !== otp) {
-             return res.status(400).json({ error: "Incorrect verification code." });
-        }
+  const { name, email, password, otp } = req.body;
+  try {
+    const record = await Otp.findOne({ email });
 
-        // Code matches! Destroy OTP and finalize account registration securely.
-        await Otp.deleteMany({ email });
-        const newUser = new User({ name, email, password });
-        await newUser.save();
-        
-        res.json({ message: "User registered successfully" });
-        
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Server error finalizing registration." });
+    if (!record) {
+      return res.status(400).json({ error: "Verification code expired. Please request a new one." });
     }
+
+    if (record.otp !== otp) {
+      return res.status(400).json({ error: "Incorrect verification code." });
+    }
+
+    // Code matches! Destroy OTP and finalize account registration securely.
+    await Otp.deleteMany({ email });
+    const newUser = new User({ name, email, password });
+    await newUser.save();
+
+    res.json({ message: "User registered successfully" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error finalizing registration." });
+  }
 });
 
 // ==========================================
@@ -145,7 +154,7 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
- 
+
 // Global Key Index Memory for Round Robin load balancing
 let currentKeyIndex = 0;
 
@@ -162,36 +171,36 @@ app.post("/ask-ai", async (req, res) => {
   // ==========================================
   const deepseekKey = process.env.DEEPSEEK_API_KEY;
   if (deepseekKey) {
-      try {
-          const dlResponse = await fetch("https://api.deepseek.com/chat/completions", {
-              method: "POST",
-              headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${deepseekKey}`
-              },
-              body: JSON.stringify({
-                  model: "deepseek-chat",
-                  messages: [
-                      { role: "system", content: "You are a helpful expert assistant. You must output only raw valid JSON if requested, without markdown code blocks." },
-                      { role: "user", content: prompt }
-                  ],
-                  temperature: 0.7
-              })
-          });
+    try {
+      const dlResponse = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${deepseekKey}`
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: "You are a helpful expert assistant. You must output only raw valid JSON if requested, without markdown code blocks." },
+            { role: "user", content: prompt }
+          ],
+          temperature: 0.7
+        })
+      });
 
-          if (dlResponse.ok) {
-              const dlData = await dlResponse.json();
-              responseText = dlData.choices[0].message.content;
-              return res.json({ text: responseText });
-          } else {
-              const payload = await dlResponse.text();
-              console.warn(`DeepSeek API Failed (${dlResponse.status}): ${payload}. Falling back to Gemini...`);
-              fallbackErrors.push(`DeepSeek failed (${dlResponse.status})`);
-          }
-      } catch (err) {
-          console.error(`DeepSeek Network Error: ${err.message}. Falling back to Gemini...`);
-          fallbackErrors.push(`DeepSeek network error`);
+      if (dlResponse.ok) {
+        const dlData = await dlResponse.json();
+        responseText = dlData.choices[0].message.content;
+        return res.json({ text: responseText });
+      } else {
+        const payload = await dlResponse.text();
+        console.warn(`DeepSeek API Failed (${dlResponse.status}): ${payload}. Falling back to Gemini...`);
+        fallbackErrors.push(`DeepSeek failed (${dlResponse.status})`);
       }
+    } catch (err) {
+      console.error(`DeepSeek Network Error: ${err.message}. Falling back to Gemini...`);
+      fallbackErrors.push(`DeepSeek network error`);
+    }
   }
 
   // ==========================================
@@ -210,49 +219,49 @@ app.post("/ask-ai", async (req, res) => {
   }
 
   try {
-  // Try keys sequentially up to the total number of keys
+    // Try keys sequentially up to the total number of keys
     for (let attempts = 0; attempts < keys.length; attempts++) {
-        const activeKey = keys[currentKeyIndex];
-        
-        // Point index to the next key for the *next* request (Round Robin balance)
-        const currentAttemptIndex = currentKeyIndex;
-        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+      const activeKey = keys[currentKeyIndex];
 
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-            }
-        );
+      // Point index to the next key for the *next* request (Round Robin balance)
+      const currentAttemptIndex = currentKeyIndex;
+      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
 
-        if (response.ok) {
-            const data = await response.json();
-            const content = data.candidates?.[0]?.content;
-            responseText = content?.parts?.[0]?.text || content?.[0]?.text || "No AI response";
-            break; // Success! Break out of the retry loop.
-        } else if (response.status === 429) {
-            // Rate Limit Hit on this key. Log and let loop try the next key immediately!
-            console.warn(`⚠️ Rate limit hit on Key ${currentAttemptIndex + 1}. Auto-switching to next fallback key...`);
-            fallbackErrors.push(`Key ${currentAttemptIndex + 1} blocked (429)`);
-            continue; 
-        } else {
-            // Other fatal errors (e.g. invalid key format)
-            const payload = await response.text();
-            console.error(`Fatal AI Error on Key ${currentAttemptIndex + 1}: ${payload}`);
-            fallbackErrors.push(`Key ${currentAttemptIndex + 1} failed (${response.status})`);
-            continue;
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
         }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.candidates?.[0]?.content;
+        responseText = content?.parts?.[0]?.text || content?.[0]?.text || "No AI response";
+        break; // Success! Break out of the retry loop.
+      } else if (response.status === 429) {
+        // Rate Limit Hit on this key. Log and let loop try the next key immediately!
+        console.warn(`⚠️ Rate limit hit on Key ${currentAttemptIndex + 1}. Auto-switching to next fallback key...`);
+        fallbackErrors.push(`Key ${currentAttemptIndex + 1} blocked (429)`);
+        continue;
+      } else {
+        // Other fatal errors (e.g. invalid key format)
+        const payload = await response.text();
+        console.error(`Fatal AI Error on Key ${currentAttemptIndex + 1}: ${payload}`);
+        fallbackErrors.push(`Key ${currentAttemptIndex + 1} failed (${response.status})`);
+        continue;
+      }
     }
 
     if (responseText) {
-        return res.json({ text: responseText });
+      return res.json({ text: responseText });
     } else {
-        // If we reach here, ALL keys were exhausted or failed.
-        return res.status(429).json({ 
-            error: `AI Error: All ${keys.length} API keys are currently completely exhausted or rate-limited. Please wait 1 minute. Details: ${fallbackErrors.join(', ')}` 
-        });
+      // If we reach here, ALL keys were exhausted or failed.
+      return res.status(429).json({
+        error: `AI Error: All ${keys.length} API keys are currently completely exhausted or rate-limited. Please wait 1 minute. Details: ${fallbackErrors.join(', ')}`
+      });
     }
 
   } catch (error) {
@@ -261,6 +270,7 @@ app.post("/ask-ai", async (req, res) => {
   }
 });
 
-app.listen(5000, () => {
-  console.log("Server running on port 5000");
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
