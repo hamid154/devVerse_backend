@@ -60,10 +60,11 @@ app.post("/send-signup-otp", async (req, res) => {
     await Otp.create({ email, otp: otpCode });
 
     await resend.emails.send({
-      from: "onboarding@resend.dev",
-      to: email,
-      subject: "Verify Your DevVerse Account",
+      from: "DevVerse <onboarding@resend.dev>",
+      to: "sonu808360@gmail.com", // 👈 पहले अपना email डाल
+      subject: "Your OTP",
       html: `<h2>Your OTP: ${otpCode}</h2>`
+
     });
 
     return res.json({ message: "OTP_SENT" });
