@@ -158,7 +158,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (MIGRATED TO AXIOS)
+// AI SYSTEM (ULTIMATE FAILOVER CHAIN)
 // =======================
 let currentKeyIndex = 0;
 
@@ -166,81 +166,67 @@ app.post("/ask-ai", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-  let fallbackErrors = [];
+  // 1. TRY DEEPSEEK FIRST
   const deepseekKey = process.env.DEEPSEEK_API_KEY;
-
-  // Try DeepSeek first
-  if (deepseekKey) {
+  if (deepseekKey && deepseekKey.trim() !== "") {
     try {
       const dlResponse = await axios.post("https://api.deepseek.com/chat/completions", {
         model: "deepseek-chat",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: prompt }
-        ],
+        messages: [{ role: "user", content: prompt }],
         temperature: 0.7
       }, {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${deepseekKey}`
-        }
+        headers: { "Authorization": `Bearer ${deepseekKey}` },
+        timeout: 10000 // 10s timeout
       });
 
+      console.log("[AI] DeepSeek Responded ✅");
       return res.json({ text: dlResponse.data.choices[0].message.content });
     } catch (err) {
       const errMsg = err.response?.data?.error?.message || err.message;
-      const errCode = err.response?.data?.error?.code || "Unknown Code";
-      console.error(`[DEEPSEEK FAIL] Status: ${err.response?.status} | Code: ${errCode} | Msg: ${errMsg}`);
-      fallbackErrors.push(`DeepSeek failed: ${errMsg}`);
+      console.error(`[AI] DeepSeek Failed (Code: ${err.response?.status || "ERR"}): ${errMsg}`);
     }
   }
 
-  // Fallback to Gemini Round-Robin
-  const keys = [
+  // 2. FALLBACK TO GEMINI ROTATION
+  const geminiKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4
-  ].filter(Boolean);
+  ].filter(k => k && k.trim() !== "");
 
-  if (keys.length === 0) {
-    return res.status(500).json({ error: "No AI API keys available" });
+  if (geminiKeys.length === 0) {
+    return res.status(500).json({ error: "No Gemini AI API keys configured. Check Render settings." });
   }
 
-  try {
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[currentKeyIndex];
-      // Increment index for next call
-      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+  // Try each Gemini key in sequence starting from currentKeyIndex
+  for (let i = 0; i < geminiKeys.length; i++) {
+    const key = geminiKeys[currentKeyIndex];
+    const currentIndex = currentKeyIndex;
+    
+    // Increment index for the next global request
+    currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
 
-      try {
-        const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${key}`,
-          {
-            contents: [{ parts: [{ text: prompt }] }]
-          },
-          {
-            headers: { "Content-Type": "application/json" }
-          }
-        );
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${key}`,
+        { contents: [{ parts: [{ text: prompt }] }] },
+        { timeout: 15000 } // 15s timeout
+      );
 
-        console.log(`[GEMINI SUCCESS] Key Index ${currentKeyIndex - 1} responded.`);
+      if (response.data && response.data.candidates && response.data.candidates[0]) {
+        console.log(`[AI] Gemini Success (Key Index: ${currentIndex}) ✅`);
         return res.json({
-          text: response.data.candidates?.[0]?.content?.parts?.[0]?.text || "No response"
+          text: response.data.candidates[0].content.parts[0].text
         });
-      } catch (err) {
-        const errMsg = err.response?.data?.error?.message || err.message;
-        console.error(`[GEMINI FAIL] Key Index ${currentKeyIndex - 1} | Status: ${err.response?.status} | Msg:`, errMsg);
       }
+    } catch (err) {
+      const errMsg = err.response?.data?.[0]?.error?.message || err.response?.data?.error?.message || err.message;
+      console.error(`[AI] Gemini Failed (Key Index: ${currentIndex}, Status: ${err.response?.status || "ERR"}): ${errMsg}`);
     }
-
-    console.error("[AI] All Gemini API keys exhausted or failed.");
-    res.status(429).json({ error: "All AI keys are exhausted or invalid. Check Render logs." });
-
-  } catch (err) {
-    console.error("[AI ERROR]:", err.message);
-    res.status(500).json({ error: "AI server error" });
   }
+
+  res.status(429).json({ error: "All AI providers (DeepSeek + Gemini) are currently unavailable or rate-limited." });
 });
 
 // =======================
