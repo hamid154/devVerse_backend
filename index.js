@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const fetch = require("node-fetch");
 require("dotenv").config();
+const nodemailer = require("nodemailer");
 
 app.use(express.json());
 
@@ -38,24 +39,14 @@ const optSchema = new mongoose.Schema({
 const Otp = mongoose.model("Otp", optSchema);
 
 // Nodemailer SMTP Transporter
-const nodemailer = require("nodemailer");
-const createTransporter = () => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn("Nodemailer missing EMAIL_USER or EMAIL_PASS in .env. OTP Emails will fail.");
-    return null;
-  }
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
-};
-const transporter = createTransporter();
-
-app.get("/", (req, res) => {
-  res.send("this is server side");
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false, // TLS
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
 });
 
 // ==========================================
