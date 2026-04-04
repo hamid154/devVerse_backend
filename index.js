@@ -188,8 +188,10 @@ app.post("/ask-ai", async (req, res) => {
 
       return res.json({ text: dlResponse.data.choices[0].message.content });
     } catch (err) {
-      fallbackErrors.push("DeepSeek failed");
-      console.error("[DEEPSEEK ERROR]:", err.message);
+      const errMsg = err.response?.data?.error?.message || err.message;
+      const errCode = err.response?.data?.error?.code || "Unknown Code";
+      console.error(`[DEEPSEEK FAIL] Status: ${err.response?.status} | Code: ${errCode} | Msg: ${errMsg}`);
+      fallbackErrors.push(`DeepSeek failed: ${errMsg}`);
     }
   }
 
