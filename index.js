@@ -6,6 +6,7 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const { Resend } = require("resend");
 
+// Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
@@ -16,7 +17,7 @@ app.use(cors());
 // =======================
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✅"))
-  .catch(err => console.log(err));
+  .catch(err => console.log("MongoDB Connection Error ❌:", err));
 
 // =======================
 // MODELS
@@ -39,39 +40,63 @@ const Otp = mongoose.model("Otp", otpSchema);
 // TEST ROUTE
 // =======================
 app.get("/", (req, res) => {
-  res.send("this is server side");
+  res.send("DevVerse Backend is Running 🚀");
 });
 
 // =======================
-// SEND OTP (RESEND FIXED)
+// SEND OTP (PRODUCTION READY)
 // =======================
 app.post("/send-signup-otp", async (req, res) => {
   const { name, email, password } = req.body;
+  console.log(`[OTP] Request received for: ${email}`);
 
   try {
+    // 1. Check if user exists
     let user = await User.findOne({ email });
     if (user) {
+      console.log(`[OTP] Account already exists for: ${email}`);
       return res.status(400).json({ error: "Account already exists." });
     }
 
+    // 2. Generate OTP
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
+    // 3. Save OTP to DB (Delete old one first)
     await Otp.deleteMany({ email });
     await Otp.create({ email, otp: otpCode });
+    console.log(`[OTP] Code generated and saved to DB`);
 
-    await resend.emails.send({
-      from: "DevVerse <onboarding@resend.dev>",
-      to: "sonu808360@gmail.com", // 👈 पहले अपना email डाल
-      subject: "Your OTP",
-      html: `<h2>Your OTP: ${otpCode}</h2>`
+    // 4. Send Email via Resend
+    // Format: "Name <email@domain.com>"
+    const fromEmail = process.env.RESEND_FROM_EMAIL || "DevVerse <onboarding@resend.dev>";
+    
+    console.log(`[RESEND] Attempting to send from: ${fromEmail} to: ${email}`);
 
+    const { data, error } = await resend.emails.send({
+      from: fromEmail,
+      to: email,
+      subject: "Your DevVerse Verification Code",
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+          <h2 style="color: #333;">Welcome to DevVerse!</h2>
+          <p>Your verification code is:</p>
+          <h1 style="color: #007bff; letter-spacing: 5px;">${otpCode}</h1>
+          <p>This code will expire in 5 minutes.</p>
+        </div>
+      `
     });
 
-    return res.json({ message: "OTP_SENT" });
+    if (error) {
+      console.error("[RESEND ERROR]:", error);
+      return res.status(500).json({ error: "Failed to send email. Check Resend dashboard/domain verification." });
+    }
+
+    console.log("[RESEND SUCCESS]:", data);
+    return res.json({ message: "OTP_SENT", resendId: data.id });
 
   } catch (err) {
-    console.log("EMAIL ERROR:", err.message);
-    res.status(500).json({ error: "Server error sending verification email." });
+    console.error("[SERVER ERROR]:", err.message);
+    res.status(500).json({ error: "Internal server error during OTP process." });
   }
 });
 
@@ -80,6 +105,7 @@ app.post("/send-signup-otp", async (req, res) => {
 // =======================
 app.post("/verify-signup", async (req, res) => {
   const { name, email, password, otp } = req.body;
+  console.log(`[VERIFY] verifying OTP for: ${email}`);
 
   try {
     const record = await Otp.findOne({ email });
@@ -97,11 +123,12 @@ app.post("/verify-signup", async (req, res) => {
     const newUser = new User({ name, email, password });
     await newUser.save();
 
+    console.log(`[VERIFY] User registered successfully: ${email}`);
     res.json({ message: "User registered successfully" });
 
   } catch (err) {
-    console.log(err);
-    res.status(500).json({ error: "Server error" });
+    console.error("[VERIFY ERROR]:", err);
+    res.status(500).json({ error: "Server error during verification" });
   }
 });
 
@@ -122,16 +149,17 @@ app.post("/login", async (req, res) => {
       return res.json({ message: "Wrong password" });
     }
 
+    console.log(`[LOGIN] Success: ${email}`);
     res.json({ message: "Login successful", name: user.name });
 
   } catch (err) {
-    console.log(err);
+    console.error("[LOGIN ERROR]:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
 // =======================
-// AI SYSTEM (UNCHANGED)
+// AI SYSTEM (UNCHANGED KEY ROTATION)
 // =======================
 let currentKeyIndex = 0;
 
@@ -139,11 +167,10 @@ app.post("/ask-ai", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt is required" });
 
-  let responseText = null;
   let fallbackErrors = [];
-
   const deepseekKey = process.env.DEEPSEEK_API_KEY;
 
+  // Try DeepSeek first
   if (deepseekKey) {
     try {
       const dlResponse = await fetch("https://api.deepseek.com/chat/completions", {
@@ -171,6 +198,7 @@ app.post("/ask-ai", async (req, res) => {
     }
   }
 
+  // Fallback to Gemini Round-Robin
   const keys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -178,13 +206,18 @@ app.post("/ask-ai", async (req, res) => {
     process.env.GEMINI_API_KEY_4
   ].filter(Boolean);
 
+  if (keys.length === 0) {
+    return res.status(500).json({ error: "No AI API keys available" });
+  }
+
   try {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[currentKeyIndex];
+      // Increment index for next call
       currentKeyIndex = (currentKeyIndex + 1) % keys.length;
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -202,15 +235,20 @@ app.post("/ask-ai", async (req, res) => {
       }
     }
 
-    res.status(429).json({ error: "All API keys exhausted" });
+    res.status(429).json({ error: "All Gemini API keys exhausted" });
 
   } catch (err) {
+    console.error("[AI ERROR]:", err);
     res.status(500).json({ error: "AI server error" });
   }
 });
 
 // =======================
+// START SERVER
+// =======================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
+  console.log(`\n🚀 Server running on port ${PORT}`);
+  console.log(`👉 DB URI: ${process.env.MONGO_URI ? "CONNECTED" : "MISSING"}`);
+  console.log(`👉 Resend Key: ${process.env.RESEND_API_KEY ? "CONFIGURED" : "MISSING"}\n`);
 });
