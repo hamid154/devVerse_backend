@@ -199,34 +199,47 @@ app.post("/ask-ai", async (req, res) => {
     return res.status(500).json({ error: "No Gemini AI API keys configured. Check Render settings." });
   }
 
-  // Try each Gemini key in sequence starting from currentKeyIndex
+  // Model Candidates to try if gemini-1.5-flash returns 404
+  const modelCandidates = ["gemini-1.5-flash", "gemini-pro", "gemini-1.5-flash-latest"];
+
+  // Try each Gemini key
   for (let i = 0; i < geminiKeys.length; i++) {
     const key = geminiKeys[currentKeyIndex];
     const currentIndex = currentKeyIndex;
-    
-    // Increment index for the next global request
     currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
 
-    try {
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${key}`,
-        { contents: [{ parts: [{ text: prompt }] }] },
-        { timeout: 15000 } // 15s timeout
-      );
+    // Try each model candidate for the current key
+    for (const model of modelCandidates) {
+      try {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          { contents: [{ parts: [{ text: prompt }] }] },
+          { timeout: 15000 }
+        );
 
-      if (response.data && response.data.candidates && response.data.candidates[0]) {
-        console.log(`[AI] Gemini Success (Key Index: ${currentIndex}) ✅`);
-        return res.json({
-          text: response.data.candidates[0].content.parts[0].text
-        });
+        if (response.data && response.data.candidates && response.data.candidates[0]) {
+          console.log(`[AI] Gemini Success (Key: ${currentIndex}, Model: ${model}) ✅`);
+          return res.json({
+            text: response.data.candidates[0].content.parts[0].text
+          });
+        }
+      } catch (err) {
+        const status = err.response?.status;
+        const errMsg = err.response?.data?.[0]?.error?.message || err.response?.data?.error?.message || err.message;
+        
+        // If 404, we try the next model candidate. Otherwise, we try the next key.
+        if (status === 404) {
+          console.warn(`[AI] Gemini 404 (Key: ${currentIndex}, Model: ${model}) - Trying next model...`);
+          continue; 
+        } else {
+          console.error(`[AI] Gemini Failed (Key: ${currentIndex}, Model: ${model}, Status: ${status}): ${errMsg}`);
+          break; // Move to the next key
+        }
       }
-    } catch (err) {
-      const errMsg = err.response?.data?.[0]?.error?.message || err.response?.data?.error?.message || err.message;
-      console.error(`[AI] Gemini Failed (Key Index: ${currentIndex}, Status: ${err.response?.status || "ERR"}): ${errMsg}`);
     }
   }
 
-  res.status(429).json({ error: "All AI providers (DeepSeek + Gemini) are currently unavailable or rate-limited." });
+  res.status(429).json({ error: "All AI providers and models (DeepSeek + Gemini) are currently unavailable or rate-limited." });
 });
 
 // =======================
