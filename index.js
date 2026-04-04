@@ -229,13 +229,18 @@ app.post("/ask-ai", async (req, res) => {
 
       if (response.ok) {
         const data = await response.json();
+        console.log(`[GEMINI SUCCESS] Key Index ${currentKeyIndex - 1} responded.`);
         return res.json({
           text: data.candidates?.[0]?.content?.parts?.[0]?.text || "No response"
         });
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        console.error(`[GEMINI FAIL] Key Index ${currentKeyIndex - 1} | Status: ${response.status} | Msg:`, errData.error?.message || "Unknown Error");
       }
     }
 
-    res.status(429).json({ error: "All Gemini API keys exhausted" });
+    console.error("[AI] All Gemini API keys exhausted or failed.");
+    res.status(429).json({ error: "All AI keys are exhausted or invalid. Check Render logs." });
 
   } catch (err) {
     console.error("[AI ERROR]:", err);
