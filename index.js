@@ -38,6 +38,27 @@ const otpSchema = new mongoose.Schema({
 const Otp = mongoose.model("Otp", otpSchema);
 
 // =======================
+// DIAGNOSTICS: Check Available Models for Gemini
+// =======================
+async function checkAvailableModels() {
+  const primaryKey = process.env.GEMINI_API_KEY;
+  if (!primaryKey) return;
+  
+  try {
+    const genAI = new GoogleGenerativeAI(primaryKey);
+    // Use raw axios to list models since the SDK doesn't always expose it clearly in all versions
+    const response = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${primaryKey}`);
+    const models = response.data.models.map(m => m.name.replace("models/", ""));
+    console.log("\n-------------------------------------------");
+    console.log("👉 [STARTUP] AVAILABLE GEMINI MODELS:");
+    console.log(models.join(", "));
+    console.log("-------------------------------------------\n");
+  } catch (err) {
+    console.warn("⚠️ [STARTUP] Could not fetch Gemini model list:", err.message);
+  }
+}
+
+// =======================
 // TEST ROUTE
 // =======================
 app.get("/", (req, res) => {
@@ -52,26 +73,19 @@ app.post("/send-signup-otp", async (req, res) => {
   console.log(`[OTP] Request received for: ${email}`);
 
   try {
-    // 1. Check if user exists
     let user = await User.findOne({ email });
     if (user) {
       console.log(`[OTP] Account already exists for: ${email}`);
       return res.status(400).json({ error: "Account already exists." });
     }
 
-    // 2. Generate OTP
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // 3. Save OTP to DB (Delete old one first)
     await Otp.deleteMany({ email });
     await Otp.create({ email, otp: otpCode });
     console.log(`[OTP] Code generated and saved to DB`);
 
-    // 4. Send Email via Resend
     const fromEmail = process.env.RESEND_FROM_EMAIL || "DevVerse <onboarding@resend.dev>";
     
-    console.log(`[RESEND] Attempting to send from: ${fromEmail} to: ${email}`);
-
     const { data, error } = await resend.emails.send({
       from: fromEmail,
       to: email,
@@ -88,15 +102,14 @@ app.post("/send-signup-otp", async (req, res) => {
 
     if (error) {
       console.error("[RESEND ERROR]:", error);
-      return res.status(500).json({ error: "Failed to send email. Check Resend dashboard/domain verification." });
+      return res.status(500).json({ error: "Failed to send email. Check Resend dashboard." });
     }
 
     console.log("[RESEND SUCCESS]:", data);
     return res.json({ message: "OTP_SENT", resendId: data.id });
-
   } catch (err) {
     console.error("[SERVER ERROR]:", err.message);
-    res.status(500).json({ error: "Internal server error during OTP process." });
+    res.status(500).json({ error: "Internal server error." });
   }
 });
 
@@ -105,30 +118,20 @@ app.post("/send-signup-otp", async (req, res) => {
 // =======================
 app.post("/verify-signup", async (req, res) => {
   const { name, email, password, otp } = req.body;
-  console.log(`[VERIFY] verifying OTP for: ${email}`);
-
   try {
     const record = await Otp.findOne({ email });
-
-    if (!record) {
-      return res.status(400).json({ error: "OTP expired" });
-    }
-
-    if (record.otp !== otp) {
-      return res.status(400).json({ error: "Wrong OTP" });
-    }
+    if (!record) return res.status(400).json({ error: "OTP expired" });
+    if (record.otp !== otp) return res.status(400).json({ error: "Wrong OTP" });
 
     await Otp.deleteMany({ email });
-
     const newUser = new User({ name, email, password });
     await newUser.save();
 
     console.log(`[VERIFY] User registered successfully: ${email}`);
     res.json({ message: "User registered successfully" });
-
   } catch (err) {
     console.error("[VERIFY ERROR]:", err);
-    res.status(500).json({ error: "Server error during verification" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -137,21 +140,13 @@ app.post("/verify-signup", async (req, res) => {
 // =======================
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
-
   try {
     let user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({ error: "Account not found" });
-    }
-
-    if (user.password !== password) {
-      return res.json({ message: "Wrong password" });
-    }
+    if (!user) return res.status(404).json({ error: "Account not found" });
+    if (user.password !== password) return res.json({ message: "Wrong password" });
 
     console.log(`[LOGIN] Success: ${email}`);
     res.json({ message: "Login successful", name: user.name });
-
   } catch (err) {
     console.error("[LOGIN ERROR]:", err);
     res.status(500).json({ error: "Server error" });
@@ -159,7 +154,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (ULTIMATE FAILOVER CHAIN with SDK)
+// AI SYSTEM (SUPER FAILOVER CHAIN)
 // =======================
 let currentKeyIndex = 0;
 
@@ -177,18 +172,18 @@ app.post("/ask-ai", async (req, res) => {
         temperature: 0.7
       }, {
         headers: { "Authorization": `Bearer ${deepseekKey}` },
-        timeout: 10000 // 10s timeout
+        timeout: 10000 
       });
 
       console.log("[AI] DeepSeek Responded ✅");
       return res.json({ text: dlResponse.data.choices[0].message.content });
     } catch (err) {
       const errMsg = err.response?.data?.error?.message || err.message;
-      console.error(`[AI] DeepSeek Failed (Code: ${err.response?.status || "ERR"}): ${errMsg}`);
+      console.error(`[AI] DeepSeek Failed: ${errMsg}`);
     }
   }
 
-  // 2. FALLBACK TO GEMINI SDK
+  // 2. FALLBACK TO GEMINI (MULTI-MODEL MAPPING)
   const geminiKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -197,8 +192,11 @@ app.post("/ask-ai", async (req, res) => {
   ].filter(k => k && k.trim() !== "");
 
   if (geminiKeys.length === 0) {
-    return res.status(500).json({ error: "No Gemini AI API keys configured. Check Render settings." });
+    return res.status(500).json({ error: "No Gemini keys configured." });
   }
+
+  // Model Candidates to try if gemini-1.5-flash yields 404
+  const modelCandidates = ["gemini-1.5-flash", "gemini-pro", "gemini-1.5-flash-latest", "gemini-1.0-pro"];
 
   // Try each Gemini key
   for (let i = 0; i < geminiKeys.length; i++) {
@@ -206,31 +204,46 @@ app.post("/ask-ai", async (req, res) => {
     const currentIndex = currentKeyIndex;
     currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
 
-    try {
-      const genAI = new GoogleGenerativeAI(key);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
+    // Try each model for this key
+    for (const modelName of modelCandidates) {
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
 
-      if (responseText) {
-        console.log(`[AI] Gemini SDK Success (Key: ${currentIndex}) ✅`);
-        return res.json({ text: responseText });
+        if (responseText) {
+          console.log(`[AI] Gemini Success (Key Index: ${currentIndex}, Model: ${modelName}) ✅`);
+          return res.json({ text: responseText });
+        }
+      } catch (err) {
+        const status = err.response?.status || err.status;
+        const errMsg = err.message;
+
+        if (errMsg.includes("404") || errMsg.includes("not found")) {
+          console.warn(`[AI] Gemini 404 (Key: ${currentIndex}, Model: ${modelName}) - Trying next candidate...`);
+          continue; 
+        } else {
+          console.error(`[AI] Gemini Error (Key: ${currentIndex}, Model: ${modelName}): ${errMsg}`);
+          break; // Move to next key if not a 404 issue (e.g., 429 quota)
+        }
       }
-    } catch (err) {
-      console.error(`[AI] Gemini SDK Failed (Key: ${currentIndex}): ${err.message}`);
     }
   }
 
-  res.status(429).json({ error: "All AI providers and models (DeepSeek + Gemini) are currently unavailable or rate-limited." });
+  res.status(429).json({ error: "AI exhausted. Check Render logs for model list." });
 });
 
 // =======================
 // START SERVER
 // =======================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`👉 DB URI: ${process.env.MONGO_URI ? "CONNECTED" : "MISSING"}`);
-  console.log(`👉 Resend Key: ${process.env.RESEND_API_KEY ? "CONFIGURED" : "MISSING"}\n`);
+  console.log(`👉 Resend Key: ${process.env.RESEND_API_KEY ? "CONFIGURED" : "MISSING"}`);
+  
+  // RUN DIAGNOSTICS
+  await checkAvailableModels();
 });
