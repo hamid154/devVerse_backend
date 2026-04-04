@@ -17,6 +17,7 @@
     "mongoose": "^9.3.3",
     "axios": "^1.7.9",
     "nodemailer": "^8.0.4",
+    "@google/generative-ai": "^0.21.0",
     "resend": "^6.10.0"
   }
 }

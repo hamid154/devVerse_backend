@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const axios = require("axios");
 const { Resend } = require("resend");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -158,7 +159,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (ULTIMATE FAILOVER CHAIN)
+// AI SYSTEM (ULTIMATE FAILOVER CHAIN with SDK)
 // =======================
 let currentKeyIndex = 0;
 
@@ -187,7 +188,7 @@ app.post("/ask-ai", async (req, res) => {
     }
   }
 
-  // 2. FALLBACK TO GEMINI ROTATION
+  // 2. FALLBACK TO GEMINI SDK
   const geminiKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -199,43 +200,25 @@ app.post("/ask-ai", async (req, res) => {
     return res.status(500).json({ error: "No Gemini AI API keys configured. Check Render settings." });
   }
 
-  // Model Candidates to try if gemini-1.5-flash returns 404
-  const modelCandidates = ["gemini-1.5-flash", "gemini-pro", "gemini-1.5-flash-latest"];
-
   // Try each Gemini key
   for (let i = 0; i < geminiKeys.length; i++) {
     const key = geminiKeys[currentKeyIndex];
     const currentIndex = currentKeyIndex;
     currentKeyIndex = (currentKeyIndex + 1) % geminiKeys.length;
 
-    // Try each model candidate for the current key
-    for (const model of modelCandidates) {
-      try {
-        const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-          { contents: [{ parts: [{ text: prompt }] }] },
-          { timeout: 15000 }
-        );
+    try {
+      const genAI = new GoogleGenerativeAI(key);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text();
 
-        if (response.data && response.data.candidates && response.data.candidates[0]) {
-          console.log(`[AI] Gemini Success (Key: ${currentIndex}, Model: ${model}) ✅`);
-          return res.json({
-            text: response.data.candidates[0].content.parts[0].text
-          });
-        }
-      } catch (err) {
-        const status = err.response?.status;
-        const errMsg = err.response?.data?.[0]?.error?.message || err.response?.data?.error?.message || err.message;
-        
-        // If 404, we try the next model candidate. Otherwise, we try the next key.
-        if (status === 404) {
-          console.warn(`[AI] Gemini 404 (Key: ${currentIndex}, Model: ${model}) - Trying next model...`);
-          continue; 
-        } else {
-          console.error(`[AI] Gemini Failed (Key: ${currentIndex}, Model: ${model}, Status: ${status}): ${errMsg}`);
-          break; // Move to the next key
-        }
+      if (responseText) {
+        console.log(`[AI] Gemini SDK Success (Key: ${currentIndex}) ✅`);
+        return res.json({ text: responseText });
       }
+    } catch (err) {
+      console.error(`[AI] Gemini SDK Failed (Key: ${currentIndex}): ${err.message}`);
     }
   }
 
