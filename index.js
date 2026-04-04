@@ -6,6 +6,8 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 require("dotenv").config();
 const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
 
@@ -87,12 +89,19 @@ app.post("/send-signup-otp", async (req, res) => {
         `
     };
 
-    await transporter.sendMail(mailOptions);
+    await resend.emails.send({
+      from: "onboarding@resend.dev",
+      to: email,
+      subject: "Verify Your Account",
+      html: `<h2>Your OTP: ${otpCode}</h2>`
+    });
     return res.json({ message: "OTP_SENT" });
 
   } catch (err) {
-    console.error(err);
+    console.log("EMAIL ERROR:", err.message); // 👈 MUST
     res.status(500).json({ error: "Server error sending verification email." });
+
+
   }
 });
 
@@ -254,10 +263,9 @@ app.post("/ask-ai", async (req, res) => {
       });
     }
 
-  } catch (err) {
-    console.log("EMAIL ERROR:", err.message); // 👈 MUST
-    res.status(500).json({ error: "Server error sending verification email." });
-
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error connecting to AI engine network." });
   }
 });
 
