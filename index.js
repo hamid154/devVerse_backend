@@ -39,16 +39,15 @@ const optSchema = new mongoose.Schema({
 const Otp = mongoose.model("Otp", optSchema);
 
 // Nodemailer SMTP Transporter
+const nodemailer = require("nodemailer");
+
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // TLS
+  service: "gmail", // 👈 IMPORTANT CHANGE
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 });
-
 // ==========================================
 // PRE-REGISTRATION OTP API (Step 1 of Signup)
 // ==========================================
@@ -255,9 +254,10 @@ app.post("/ask-ai", async (req, res) => {
       });
     }
 
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server error connecting to AI engine network." });
+  } catch (err) {
+    console.log("EMAIL ERROR:", err.message); // 👈 MUST
+    res.status(500).json({ error: "Server error sending verification email." });
+
   }
 });
 
