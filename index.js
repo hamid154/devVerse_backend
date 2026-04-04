@@ -3,7 +3,7 @@ const express = require("express");
 const app = express();
 const mongoose = require("mongoose");
 const cors = require("cors");
-const fetch = require("node-fetch");
+const axios = require("axios");
 const { Resend } = require("resend");
 
 // Initialize Resend
@@ -67,7 +67,6 @@ app.post("/send-signup-otp", async (req, res) => {
     console.log(`[OTP] Code generated and saved to DB`);
 
     // 4. Send Email via Resend
-    // Format: "Name <email@domain.com>"
     const fromEmail = process.env.RESEND_FROM_EMAIL || "DevVerse <onboarding@resend.dev>";
     
     console.log(`[RESEND] Attempting to send from: ${fromEmail} to: ${email}`);
@@ -159,7 +158,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (UNCHANGED KEY ROTATION)
+// AI SYSTEM (MIGRATED TO AXIOS)
 // =======================
 let currentKeyIndex = 0;
 
@@ -173,28 +172,24 @@ app.post("/ask-ai", async (req, res) => {
   // Try DeepSeek first
   if (deepseekKey) {
     try {
-      const dlResponse = await fetch("https://api.deepseek.com/chat/completions", {
-        method: "POST",
+      const dlResponse = await axios.post("https://api.deepseek.com/chat/completions", {
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7
+      }, {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${deepseekKey}`
-        },
-        body: JSON.stringify({
-          model: "deepseek-chat",
-          messages: [
-            { role: "system", content: "You are a helpful assistant." },
-            { role: "user", content: prompt }
-          ],
-          temperature: 0.7
-        })
+        }
       });
 
-      if (dlResponse.ok) {
-        const dlData = await dlResponse.json();
-        return res.json({ text: dlData.choices[0].message.content });
-      }
+      return res.json({ text: dlResponse.data.choices[0].message.content });
     } catch (err) {
       fallbackErrors.push("DeepSeek failed");
+      console.error("[DEEPSEEK ERROR]:", err.message);
     }
   }
 
@@ -216,26 +211,24 @@ app.post("/ask-ai", async (req, res) => {
       // Increment index for next call
       currentKeyIndex = (currentKeyIndex + 1) % keys.length;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      try {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+          {
             contents: [{ parts: [{ text: prompt }] }]
-          })
-        }
-      );
+          },
+          {
+            headers: { "Content-Type": "application/json" }
+          }
+        );
 
-      if (response.ok) {
-        const data = await response.json();
         console.log(`[GEMINI SUCCESS] Key Index ${currentKeyIndex - 1} responded.`);
         return res.json({
-          text: data.candidates?.[0]?.content?.parts?.[0]?.text || "No response"
+          text: response.data.candidates?.[0]?.content?.parts?.[0]?.text || "No response"
         });
-      } else {
-        const errData = await response.json().catch(() => ({}));
-        console.error(`[GEMINI FAIL] Key Index ${currentKeyIndex - 1} | Status: ${response.status} | Msg:`, errData.error?.message || "Unknown Error");
+      } catch (err) {
+        const errMsg = err.response?.data?.error?.message || err.message;
+        console.error(`[GEMINI FAIL] Key Index ${currentKeyIndex - 1} | Status: ${err.response?.status} | Msg:`, errMsg);
       }
     }
 
@@ -243,7 +236,7 @@ app.post("/ask-ai", async (req, res) => {
     res.status(429).json({ error: "All AI keys are exhausted or invalid. Check Render logs." });
 
   } catch (err) {
-    console.error("[AI ERROR]:", err);
+    console.error("[AI ERROR]:", err.message);
     res.status(500).json({ error: "AI server error" });
   }
 });
