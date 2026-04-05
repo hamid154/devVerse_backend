@@ -4,10 +4,6 @@ const app = express();
 const mongoose = require("mongoose");
 const cors = require("cors");
 const axios = require("axios");
-const { Resend } = require("resend");
-
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(express.json());
 app.use(cors());
@@ -29,64 +25,71 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("mytools", userSchema, "mytools");
 
-const otpSchema = new mongoose.Schema({
-  email: String,
-  otp: String,
-  createdAt: { type: Date, default: Date.now, expires: 300 },
+// =======================
+// DB STATUS TEST
+// =======================
+app.get("/test-db", async (req, res) => {
+  try {
+    const isConnected = mongoose.connection.readyState === 1;
+    if (isConnected) {
+      const count = await User.countDocuments();
+      res.json({ status: "Connected ✅", database: "DevVerse", collection: "mytools", users: count });
+    } else {
+      res.status(500).json({ status: "Disconnected ❌", state: mongoose.connection.readyState });
+    }
+  } catch (err) {
+    res.status(500).json({ status: "Error ❌", message: err.message });
+  }
 });
-const Otp = mongoose.model("Otp", otpSchema);
+
 
 // =======================
-// TEST ROUTE
+// SIMPLE AUTH SYSTEM (DIRECT SIGNUP)
 // =======================
-app.get("/", (req, res) => {
-  res.send("DevVerse Backend is Running 🚀");
-});
 
-// =======================
-// OTP & AUTH APIs (STABLE)
-// =======================
-app.post("/send-signup-otp", async (req, res) => {
+// 1. INSTANT SIGNUP / REGISTER
+// Now uses /register but supports legacy /send-signup-otp
+app.post(["/register", "/send-signup-otp"], async (req, res) => {
   const { name, email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+
   try {
-    let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ error: "Account already exists." });
+    const normalizedEmail = email.toLowerCase();
+    
+    // Create/Update user instantly
+    const user = await User.findOneAndUpdate(
+      { email: normalizedEmail },
+      { name: name || "User", email: normalizedEmail, password },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    await Otp.deleteMany({ email });
-    await Otp.create({ email, otp: otpCode });
-
-    const fromEmail = process.env.RESEND_FROM_EMAIL || "DevVerse <onboarding@resend.dev>";
-    const { data, error } = await resend.emails.send({
-      from: fromEmail,
-      to: email,
-      subject: "Verification Code",
-      html: `<div style="font-family:sans-serif;padding:20px;"><h2>Welcome!</h2><p>Your code is: <b>${otpCode}</b></p></div>`
-    });
-
-    if (error) return res.status(500).json({ error: "Email failed" });
-    res.json({ message: "OTP_SENT" });
-  } catch (err) { res.status(500).json({ error: "Server error" }); }
+    console.log(`[AUTH] Registration/Reset Success: ${normalizedEmail}`);
+    res.json({ message: "User registered successfully", name: user.name });
+  } catch (err) {
+    console.error("[AUTH ERROR]:", err.message);
+    res.status(500).json({ error: "Server error during registration" });
+  }
 });
 
-app.post("/verify-signup", async (req, res) => {
-  const { name, email, password, otp } = req.body;
-  try {
-    const record = await Otp.findOne({ email });
-    if (!record || record.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
-    await Otp.deleteMany({ email });
-    await new User({ name, email, password }).save();
-    res.json({ message: "User registered successfully" });
-  } catch (err) { res.status(500).json({ error: "Server error" }); }
+// Legacy support: In case old frontend tries to verify
+app.post("/verify-signup", (req, res) => {
+  res.json({ message: "User registered successfully" });
 });
 
+// 2. STABLE LOGIN
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
   try {
-    let user = await User.findOne({ email });
-    if (!user || user.password !== password) return res.status(401).json({ error: "Invalid credentials" });
+    let user = await User.findOne({ email: email.toLowerCase() });
+    if (!user || user.password !== password) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+    console.log(`[LOGIN] Success: ${email}`);
     res.json({ message: "Login successful", name: user.name });
-  } catch (err) { res.status(500).json({ error: "Server error" }); }
+  } catch (err) {
+    console.error("[LOGIN ERROR]:", err);
+    res.status(500).json({ error: "Server error during login" });
+  }
 });
 
 // =======================
@@ -98,7 +101,6 @@ app.post("/ask-ai", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  // List of Gemini Keys from ENV
   const keys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -106,43 +108,32 @@ app.post("/ask-ai", async (req, res) => {
     process.env.GEMINI_API_KEY_4
   ].filter(Boolean);
 
-  if (keys.length === 0) return res.status(500).json({ error: "No keys configured" });
+  if (keys.length === 0) return res.status(500).json({ error: "No AI keys" });
 
-  // Try each key in a loop
   for (let i = 0; i < keys.length; i++) {
     const key = keys[currentKeyIndex];
-    // Rotate index for NEXT request
     currentKeyIndex = (currentKeyIndex + 1) % keys.length;
 
     try {
-      // Direct Axios Post with v1beta and gemini-2.5-flash
       const response = await axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }]
-        },
+        { contents: [{ parts: [{ text: prompt }] }] },
         { headers: { "Content-Type": "application/json" }, timeout: 15000 }
       );
 
       if (response.data && response.data.candidates && response.data.candidates[0]) {
-        console.log(`[AI SUCCESS] Key Index ${i} used.`);
-        return res.json({
-          text: response.data.candidates[0].content.parts[0].text
-        });
+        return res.json({ text: response.data.candidates[0].content.parts[0].text });
       }
     } catch (err) {
-      console.error(`[AI FAIL] Key Index ${i}:`, err.response?.data?.error?.message || err.message);
-      // If error occurs, continue to NEXT key in the loop
+      console.error(`[AI FAIL] Index ${currentKeyIndex}:`, err.message);
       continue;
     }
   }
-
-  res.status(429).json({ error: "All AI keys failed or exhausted. Try again later." });
+  res.status(429).json({ error: "AI keys exhausted" });
 });
 
-// =======================
-// START SERVER
-// =======================
+app.get("/", (req, res) => { res.send("DevVerse Live 🚀 (Simple Auth)"); });
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
