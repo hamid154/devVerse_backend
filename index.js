@@ -48,8 +48,8 @@ app.get("/test-db", async (req, res) => {
 // =======================
 
 // 1. INSTANT SIGNUP / REGISTER
-// Now uses /register but supports legacy /send-signup-otp
-app.post(["/register", "/send-signup-otp"], async (req, res) => {
+// Now supports /signup, /register and legacy /send-signup-otp
+app.post(["/signup", "/register", "/send-signup-otp"], async (req, res) => {
   const { name, email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
