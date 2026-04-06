@@ -82,7 +82,7 @@ app.post("/login", async (req, res) => {
   try {
     let user = await User.findOne({ email: email.toLowerCase() });
     if (!user || user.password !== password) {
-      return res.status(401).json({ error: "Wrong pass" });
+      return res.status(401).json({ error: "Wrong password" });
     }
     console.log(`[LOGIN] Success: ${email}`);
     res.json({ message: "Login successful", name: user.name });
