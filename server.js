@@ -81,10 +81,16 @@ app.post(["/signup", "/register", "/send-signup-otp"], async (req, res) => {
         token: generateToken(user._id)
     });
   } catch (err) {
-    console.error("[AUTH ERROR]:", err.message);
-    res.status(500).json({ error: "Server error during registration" });
+    console.error("[AUTH ERROR]:", err);
+    // Returning actual error message for debugging
+    res.status(500).json({ 
+        error: "Server error during registration", 
+        details: err.message,
+        code: err.code 
+    });
   }
 });
+
 
 // 2. SECURE LOGIN
 app.post("/login", async (req, res) => {
