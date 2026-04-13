@@ -116,56 +116,63 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (DEEPSEEK)
+// AI SYSTEM (GEMINI - FREE TIER)
 // =======================
+let currentKeyIndex = 0;
+
 app.post("/ask-ai", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+  const keys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4
+  ].filter(Boolean);
 
-  if (!DEEPSEEK_KEY) {
-    return res.status(500).json({ error: "DeepSeek API key not configured on server" });
-  }
+  if (keys.length === 0) return res.status(500).json({ error: "No AI keys configured" });
 
-  try {
-    const response = await axios.post(
-      "https://api.deepseek.com/v1/chat/completions",
-      {
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: "You are NEXUS AI, an advanced developer assistant for the DevVerse platform." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 2048
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${DEEPSEEK_KEY}`
+  // Try each key starting from the current selection
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[currentKeyIndex];
+
+    try {
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`,
+        {
+          contents: [{ parts: [{ text: prompt }] }]
+        },
+        { headers: { "Content-Type": "application/json" } }
+      );
+
+      if (response.data && response.data.candidates && response.data.candidates[0]) {
+        let text = response.data.candidates[0].content.parts[0].text;
+        
+        // Auto-clean Markdown JSON blocks for tools
+        if (text.includes('```')) {
+          text = text.replace(/```json/g, '').replace(/```JSON/g, '').replace(/```/g, '').trim();
         }
+        
+        return res.json({ text });
       }
-    );
+    } catch (err) {
+      const status = err.response?.status;
+      const errorMsg = err.response?.data?.error?.message || err.message;
+      
+      console.error(`[AI FAIL] Index ${currentKeyIndex}: status ${status} - ${errorMsg}`);
 
-    if (response.data && response.data.choices && response.data.choices[0]) {
-      let text = response.data.choices[0].message.content;
-      
-      // Auto-clean Markdown JSON blocks for tools
-      if (text.includes('```')) {
-        text = text.replace(/```json/g, '').replace(/```JSON/g, '').replace(/```/g, '').trim();
+      // Rotate on quota (429) or invalid key (400)
+      if (status === 429 || status === 400 || status === 401 || status === 403 || status >= 500) {
+        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+        continue;
       }
       
-      return res.json({ text });
+      return res.status(status || 500).json({ error: "AI Engine Error", details: errorMsg });
     }
-
-    throw new Error("Invalid response from DeepSeek API");
-
-  } catch (err) {
-    console.error("[DEEPSEEK ERROR]:", err.response?.data || err.message);
-    const errorMsg = err.response?.data?.error?.message || "AI logic failed. Please check your DeepSeek key and credits.";
-    res.status(err.response?.status || 500).json({ error: errorMsg });
   }
+
+  res.status(429).json({ error: "All AI keys currently exhausted. Please Wait 1 minute." });
 });
 
 // Protected route example
