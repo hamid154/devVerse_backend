@@ -77,7 +77,7 @@ app.post(["/signup", "/register", "/send-signup-otp"], async (req, res) => {
 
     res.json({ 
         message: "User registered successfully", 
-        name: user.name,
+        user: { id: user._id, name: user.name, email: user.email },
         token: generateToken(user._id)
     });
   } catch (err) {
@@ -106,7 +106,7 @@ app.post("/login", async (req, res) => {
     console.log(`[LOGIN] Success: ${email}`);
     res.json({ 
       message: "Login successful", 
-      name: user.name,
+      user: { id: user._id, name: user.name, email: user.email },
       token: generateToken(user._id)
     });
   } catch (err) {
@@ -146,7 +146,14 @@ app.post("/ask-ai", async (req, res) => {
       );
 
       if (response.data && response.data.candidates && response.data.candidates[0]) {
-        return res.json({ text: response.data.candidates[0].content.parts[0].text });
+        let text = response.data.candidates[0].content.parts[0].text;
+        
+        // Auto-clean Markdown JSON blocks if present
+        if (text.includes('```')) {
+          text = text.replace(/```json/g, '').replace(/```JSON/g, '').replace(/```/g, '').trim();
+        }
+        
+        return res.json({ text });
       }
     } catch (err) {
       const status = err.response?.status;
