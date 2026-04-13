@@ -116,7 +116,7 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (GEMINI 2.5 FLASH)
+// AI SYSTEM (GEMINI 1.5 FLASH)
 // =======================
 let currentKeyIndex = 0;
 
@@ -133,13 +133,14 @@ app.post("/ask-ai", async (req, res) => {
 
   if (keys.length === 0) return res.status(500).json({ error: "No AI keys configured" });
 
+  // Try each key starting from the current selection
   for (let i = 0; i < keys.length; i++) {
     const key = keys[currentKeyIndex];
-    currentKeyIndex = (currentKeyIndex + 1) % keys.length;
 
     try {
+      console.log(`[AI] Using Key Index: ${currentKeyIndex}`);
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
         { contents: [{ parts: [{ text: prompt }] }] },
         { headers: { "Content-Type": "application/json" }, timeout: 15000 }
       );
@@ -148,11 +149,23 @@ app.post("/ask-ai", async (req, res) => {
         return res.json({ text: response.data.candidates[0].content.parts[0].text });
       }
     } catch (err) {
-      console.error(`[AI FAIL] Index ${currentKeyIndex}:`, err.message);
-      continue;
+      const status = err.response?.status;
+      const errorMsg = err.response?.data?.error?.message || err.message;
+
+      console.error(`[AI FAIL] Index ${currentKeyIndex}:`, errorMsg);
+
+      // Rotate if quota exhausted (429) or other retryable errors
+      if (status === 429 || status === 403 || status >= 500) {
+        console.log(`[AI ROTATING] Switching from index ${currentKeyIndex}...`);
+        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+        continue;
+      }
+
+      // If it's a regular error (like prompt rejection), don't bother rotating
+      return res.status(status || 500).json({ error: "AI Processing Error", details: errorMsg });
     }
   }
-  res.status(429).json({ error: "AI keys exhausted" });
+  res.status(429).json({ error: "All AI keys exhausted or failing" });
 });
 
 // Protected route example
