@@ -116,63 +116,56 @@ app.post("/login", async (req, res) => {
 });
 
 // =======================
-// AI SYSTEM (GEMINI 2.5 FLASH)
+// AI SYSTEM (DEEPSEEK)
 // =======================
-let currentKeyIndex = 0;
-
 app.post("/ask-ai", async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) return res.status(400).json({ error: "Prompt required" });
 
-  const keys = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4
-  ].filter(Boolean);
+  const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
 
-  if (keys.length === 0) return res.status(500).json({ error: "No AI keys configured" });
-
-  // Try each key starting from the current selection
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[currentKeyIndex];
-
-    try {
-      console.log(`[AI] Using Key Index: ${currentKeyIndex}`);
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-        { contents: [{ parts: [{ text: prompt }] }] },
-        { headers: { "Content-Type": "application/json" }, timeout: 15000 }
-      );
-
-      if (response.data && response.data.candidates && response.data.candidates[0]) {
-        let text = response.data.candidates[0].content.parts[0].text;
-        
-        // Auto-clean Markdown JSON blocks if present
-        if (text.includes('```')) {
-          text = text.replace(/```json/g, '').replace(/```JSON/g, '').replace(/```/g, '').trim();
-        }
-        
-        return res.json({ text });
-      }
-    } catch (err) {
-      const status = err.response?.status;
-      const errorMsg = err.response?.data?.error?.message || err.message;
-
-      console.error(`[AI FAIL] Index ${currentKeyIndex}:`, errorMsg);
-
-      // Rotate if quota exhausted (429), or invalid key (400, 401, 403), or server error (500+)
-      if (status === 429 || status === 400 || status === 401 || status === 403 || status >= 500) {
-        console.log(`[AI ROTATING] Switching from index ${currentKeyIndex}...`);
-        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-        continue;
-      }
-
-      // If it's a regular error (like prompt rejection), don't bother rotating
-      return res.status(status || 500).json({ error: "AI Processing Error", details: errorMsg });
-    }
+  if (!DEEPSEEK_KEY) {
+    return res.status(500).json({ error: "DeepSeek API key not configured on server" });
   }
-  res.status(429).json({ error: "All AI keys exhausted or failing" });
+
+  try {
+    const response = await axios.post(
+      "https://api.deepseek.com/v1/chat/completions",
+      {
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: "You are NEXUS AI, an advanced developer assistant for the DevVerse platform." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 2048
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${DEEPSEEK_KEY}`
+        }
+      }
+    );
+
+    if (response.data && response.data.choices && response.data.choices[0]) {
+      let text = response.data.choices[0].message.content;
+      
+      // Auto-clean Markdown JSON blocks for tools
+      if (text.includes('```')) {
+        text = text.replace(/```json/g, '').replace(/```JSON/g, '').replace(/```/g, '').trim();
+      }
+      
+      return res.json({ text });
+    }
+
+    throw new Error("Invalid response from DeepSeek API");
+
+  } catch (err) {
+    console.error("[DEEPSEEK ERROR]:", err.response?.data || err.message);
+    const errorMsg = err.response?.data?.error?.message || "AI logic failed. Please check your DeepSeek key and credits.";
+    res.status(err.response?.status || 500).json({ error: errorMsg });
+  }
 });
 
 // Protected route example
